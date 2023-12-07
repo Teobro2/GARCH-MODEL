@@ -1,0 +1,378 @@
+
+
+# Load packages
+```{r}
+library(abind)
+library(ks)
+library(tseries)
+library(lubridate)
+library(rugarch)
+library(lmtest)
+library(knitr)
+library(xts)
+library(PerformanceAnalytics)
+```
+
+# Import our dataset
+```{r}
+rm(list=ls())
+AAL<-read.csv("AAL.csv")
+
+str(AAL$Date)
+AAL$Date <- as.Date(AAL$Date, format = "%d/%m/%Y")
+
+AAL$logPrice<-log(AAL$Adj.Close)
+AAL$logRet[2:4564]<-AAL$logPrice[2:4564]-AAL$logPrice[1:4563]
+y<-AAL$logRet[-1]
+y<-y-mean(y)
+
+# Simple plot
+plot(y, type = "l", main = "Returns for American Airlines")
+
+p1 <- ggplot(AAL, aes(x = Date, y = logRet)) +
+   geom_line(color = "black") +
+   labs(y = "logReturn", title = "Returns of AAL")
+
+```
+
+# All Garch models
+```{r}
+#Transform the system(default) date to actual date
+y_xts <- xts(y, order.by = AAL$Date[-1])
+
+#GARCH NORM MODEL(1,1)
+default_spec <- ugarchspec(variance.model = list(garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "norm")
+default_garch <- ugarchfit(spec = default_spec, data = y_xts)
+default_garch
+
+coef(default_garch)
+```
+
+```{r}
+#GARCH NORM MODEL(2,2)
+second_garch<- ugarchspec(
+  variance.model = list(garchOrder = c(2,2)),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "norm" 
+)
+GARCH_2 <- ugarchfit(spec = second_garch, data = y_xts)
+GARCH_2
+
+coef(GARCH_2)
+```
+
+
+```{r}
+# tGARCH(1,1)
+tgarch <- ugarchspec(
+  variance.model = list(garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+tGARCH <- ugarchfit(spec = tgarch, data = y_xts)
+tGARCH 
+
+coef(tGARCH)
+```
+
+```{r}
+# tGARCH(2,2)
+tgarch_2 <- ugarchspec(
+  variance.model = list(garchOrder = c(2,2)),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+tGARCH_2 <- ugarchfit(spec = tgarch_2, data = y_xts)
+tGARCH_2
+
+coef(tGARCH_2)
+```
+
+```{r}
+# tGARCH(3,3)
+tgarch_3 <- ugarchspec(
+  variance.model = list(garchOrder = c(3,3)),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+tGARCH_3 <- ugarchfit(spec = tgarch_3, data = y_xts)
+tGARCH_3
+
+coef(tGARCH_3)
+```
+
+```{r}
+# GARCH with skewed Student-t(1,1)
+stgarch <- ugarchspec(
+  variance.model = list(garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "sstd"
+)
+stGARCH <- ugarchfit(spec = stgarch, data = y_xts)
+stGARCH
+
+coef(stGARCH)
+```
+
+```{r}
+#APARCH model
+aparch <- ugarchspec(
+  variance.model = list(model = "apARCH"),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE)
+)
+apARCH <- ugarchfit(spec = aparch, data = y_xts)
+apARCH
+
+coef(apARCH)
+```
+
+```{r}
+# tAPARCH model
+taparch <- ugarchspec(
+  variance.model = list(model = "apARCH"),
+  mean.model = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+tapARCH <- ugarchfit(spec = taparch, data = y_xts)
+tapARCH
+
+coef(tapARCH)
+```
+
+# Test for the differences between the models
+```{r}
+# parameter significance
+kable(data.frame(round(default_garch@fit$matcoef,6)), caption = "Parameters in GARCH(1,1) model", format = "markdown")
+
+kable(data.frame(round(GARCH_2@fit$matcoef,6)), caption = "Parameters in GARCH(2,2) model", format = "markdown")
+
+kable(data.frame(round(tGARCH@fit$matcoef,6)), caption = "Parameters in tGARCH(1,1) model", format = "markdown")
+
+kable(data.frame(round(tGARCH_2@fit$matcoef,6)), caption = "Parameters in tGARCH(2,2) model", format = "markdown")
+
+kable(data.frame(round(tGARCH_3@fit$matcoef,6)), caption = "Parameters in tGARCH(3,3) model", format = "markdown")
+
+kable(data.frame(round(stGARCH@fit$matcoef,6)), caption = "Parameters in skewed tGARCH(1,1) model", format = "markdown")
+
+kable(data.frame(round(apARCH@fit$matcoef,6)), caption = "Parameters in APARCH model", format = "markdown")
+
+kable(data.frame(round(tapARCH@fit$matcoef,6)), caption = "Parameters in tAPARCH model", format = "markdown")
+```
+
+```{r, results='asis'}
+# LR tests function definition
+Test <- function(restricted, unrestricted) {
+  
+  # Specifying the degrees of freedom as the number of restrictions
+  df <- length(unrestricted@fit$coef) - length(restricted@fit$coef)
+  
+  # Creating the likelihood ratio statistic (LR statistic)
+  lr <- 2*(likelihood(unrestricted) - likelihood(restricted))
+  
+  # Finding its p-value using the chi-squared distribution
+  p.value <- 1 - pchisq(lr, df)
+  
+  # Outputting the results
+  cat("Degrees of freedom:", df, "\n",
+      "Likelihood of unrestricted model:", likelihood(unrestricted), "\n",
+      "Likelihood of restricted model:", likelihood(restricted), "\n",
+      "LR: 2*(Lu-Lr):", lr, "\n",
+      "p-value:", p.value
+  )
+}
+
+# Perform likelihood ratio tests
+Test(default_garch, GARCH_2)
+Test(default_garch, tGARCH)
+Test(tGARCH, stGARCH)
+Test(default_garch, tapARCH)
+Test(default_garch, apARCH)
+
+
+# Create a data frame to store the LR test results
+LRtest <- data.frame(
+  Unrestricted_model = c("GARCH(2,2)", "Student-t GARCH(1,1)", 
+                         "Skewed Student-t GARCH(1,1)", "Student-t APARCH","APARCH"),
+  
+  Restricted_model = c("GARCH(1,1)", "GARCH(1,1)",
+                       "Student-t GARCH(1,1)", "GARCH(1,1)","GARCH(1,1)"),
+  LR_statistics = c(0.411,296.87,0.45,342.55,70.54),
+  p_value = c(0.813,0, 0.50, 0,0)
+)
+
+# Print the LR test results data frame using kable
+kable(LRtest, caption = "Loglikelihood Ratio Test Table", format = "markdown")
+
+# Based on our likelihood ratio tests, we select the Student-t APGARCH(1,1) model
+
+```
+
+```{r}
+# residual diagnostics
+residualsdiag <- function(modelfit){
+  # Plot the first component
+plot(modelfit, which = 1)
+
+# Loop through components 2 to 12 and plot each one
+for (i in 2:12) {
+  plot(modelfit, which = i)
+}
+
+}
+
+par(mfrow=c(1,1))
+residualsdiag(default_garch)
+residualsdiag(GARCH_2)
+residualsdiag(tGARCH)
+residualsdiag(tGARCH_2)
+residualsdiag(tGARCH_3)
+residualsdiag(stGARCH)
+residualsdiag(apARCH)
+```
+
+```{r}
+# Jarque-Bera test for Normality
+JB1 <- jarque.bera.test(y/default_garch@fit$sigma)
+JB2 <- jarque.bera.test(y/GARCH_2@fit$sigma)
+JB3 <- jarque.bera.test(y/tGARCH@fit$sigma)
+JB4 <- jarque.bera.test(y/tGARCH_2@fit$sigma)
+JB5 <- jarque.bera.test(y/tGARCH_3@fit$sigma)
+JB6 <- jarque.bera.test(y/stGARCH@fit$sigma)
+JB7 <- jarque.bera.test(y/apARCH@fit$sigma)
+JB8 <- jarque.bera.test(y/tapARCH@fit$sigma)
+
+# Ljung-Box test for residuals autocorrelation
+LB1 <- Box.test(y/default_garch@fit$sigma, type = "Ljung-Box")
+LB2 <- Box.test(y/GARCH_2@fit$sigma, type = "Ljung-Box")
+LB3 <- Box.test(y/tGARCH@fit$sigma, type = "Ljung-Box")
+LB4 <- Box.test(y/tGARCH_2@fit$sigma, type = "Ljung-Box")
+LB5 <- Box.test(y/tGARCH_3@fit$sigma, type = "Ljung-Box")
+LB6 <- Box.test(y/stGARCH@fit$sigma, type = "Ljung-Box")
+LB7 <- Box.test(y/apARCH@fit$sigma, type = "Ljung-Box")
+LB8 <- Box.test(y/tapARCH@fit$sigma, type = "Ljung-Box")
+
+# Analysis of residuals - Constructing the table
+Residualtests <- data.frame(
+  Model = c("GARCH(1,1)","GARCH(2,2)", "Student-t GARCH(1,1)",
+            "Student-t GARCH(2,2)","Student-t GARCH(3,3)",
+            "Skewed Student-t GARCH(1,1)",
+            "APARCH","Student-t APARCH"),
+  Jarque_Bera = c(JB1$p.value, JB2$p.value, JB3$p.value,
+                  JB4$p.value, JB5$p.value, JB6$p.value,
+                  JB7$p.value, JB8$p.value),
+  Ljung_Box = c(LB1$p.value, LB2$p.value, LB3$p.value,
+                LB4$p.value, LB5$p.value, LB6$p.value,
+                LB7$p.value, LB8$p.value)
+)
+
+# Print the data frame using kable
+kable(Residualtests, caption = "Residuals Table", format = "markdown")
+
+infocriteria(GARCH_2)
+infocriteria(tGARCH) # the smallest BIC and AIC
+infocriteria(tGARCH_2)
+
+# Although the LB test statistics are small for all models, we compare the BIC and AIC for all our models and find that the BIC in Student-t GARCH(1,1) model is smallest.
+```
+
+```{r conditionalvol}
+# conditional volatility
+plot(sigma(tGARCH), type = "l", main = "Esimated conditional volatility for American Arilines", ylab="Conditional volatility")
+
+# residual diagnostics
+residualsdiag <- function(modelfit){
+  # Plot the first component
+plot(modelfit, which = "all")
+
+
+}
+
+par(mfrow=c(1,2))
+residualsdiag(tapARCH)
+```
+
+```{r}
+plotroll <- chart.RollingPerformance(R = y_xts,
+                                  width = 19,
+                                  FUN = "sd.annualized",
+                                  scale = 252, 
+                                  main = "AAL annualized volatility, rolling 1 month",
+                                  colorset="steelblue1")
+                                
+plotroll <- addSeries(sqrt(252)*sigma(tapARCH), col = "red", on = 1, lwd=2)
+plotroll
+
+plotroll <- addSeries(sqrt(252)*sigma(tGARCH), col = "green", on = 1, lwd=2)
+plotroll
+
+```
+
+```{r return}
+n_ahead <- 1000
+forecast <- ugarchforecast(tGARCH, n.ahead = n_ahead, data = y)
+fd <- rollapply(y,width=22,FUN = "sd")
+fd <-fd*sqrt(252)
+fd=as.ts(fd)
+ts.plot(fd,xlim=c(0, 5600), ylim=c(0,2.5), col=4, 
+        ylab="Annualized standard deviation", main="sigma forecast")
+zs=sqrt(252)*sigma(forecast)
+af<-ts(zs, start=4564)
+points(af,type="l",col=2) 
+
+```
+
+```{r}
+# small sample properties
+# we extract the return from 2010 to 2018
+ynew = y[2010:3338]
+default_garchnew = ugarchfit(default_spec,ynew)
+GARCH_2new = ugarchfit(second_garch,ynew)
+tGARCHnew = ugarchfit(tgarch,ynew)
+tGARCH_2new = ugarchfit(tgarch_2,ynew)
+stGARCHnew = ugarchfit(stgarch,ynew)
+apARCHnew = ugarchfit(aparch,ynew)
+tapARCHnew = ugarchfit(taparch,ynew)
+
+Test(default_garchnew, GARCH_2new)
+Test(default_garchnew, tGARCHnew)
+Test(tGARCHnew, stGARCHnew)
+Test(default_garchnew, tapARCHnew)
+Test(default_garchnew, apARCHnew)
+
+LRtest <- data.frame(
+  Unrestricted_model = c("GARCH(2,2)", "Student-t GARCH(1,1)", 
+                         "Skewed Student-t GARCH(1,1)", "Student-t APARCH","APARCH"),
+  
+  Restricted_model = c("GARCH(1,1)", "GARCH(1,1)",
+                       "Student-t GARCH(1,1)", "GARCH(1,1)","GARCH(1,1)"),
+  LR_statistics = c(, 162.45, 4.22, 1.05, -143.13),
+  p_value = c(0.22, 0.00, 0.12, 0.31, 1)
+)
+
+# Print the data frame using kable
+kable(LRtest, caption = "Loglikehood Ratio Test Table with smaller windows", format = "markdown")
+
+
+
+
+#TO BE COMPLETED
+```
+
+
+# residual diagnostics
+residualsdiag <- function(modelfit){
+  # Plot the first component
+plot(modelfit, which = "all")
+
+
+}
+
+par(mfrow=c(1,2))
+residualsdiag(default_garch)
+residualsdiag(tGARCH)
+residualsdiag(tapARCH)
+residualsdiag(apARCH)
+
+
